@@ -143,7 +143,7 @@ class MatrixModelBase:
         rmse = np.sqrt(rmse / R.getnnz())
         return rmse
 
-    def fit(self, R, R_val):
+    def fit(self, R, R_val=None):
         """
         Base fitting function.
 
