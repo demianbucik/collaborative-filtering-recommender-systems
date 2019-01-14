@@ -91,7 +91,6 @@ class MatrixModelBase:
         """
         Initializes the model.
 
-
         :param lrate: Learning rate.
         :param reg_b: Regularization parameter for biases.
         :param reg: Regularization parameter for user and item matrices.
@@ -143,7 +142,7 @@ class MatrixModelBase:
         rmse = np.sqrt(rmse / R.getnnz())
         return rmse
 
-    def fit(self, R, R_val=None):
+    def fit(self, R, R_val):
         """
         Base fitting function.
 
@@ -188,9 +187,9 @@ class MatrixModel(MatrixModelBase):
                 all activation functions (including Identity) clip evaluation output to interval [0, 1].
 
     Parameters are set by optimizing J(P, Q, user_bias, item_bias) with stochastic gradient descent.
-    J = sum((rui - rui_hat)**2) + reg * (F-norm(P) + F-norm(Q)) + reg_b * (norm(user_bias) + norm(item_bias))
+    J = sum((rui - rui_hat)**2) + reg * (norm(P) + norm(Q)) + reg_b * (norm(user_bias) + norm(item_bias))
 
-    where   F-norm() is Frobenius norm and norm() is 2-norm,
+    where   norm() is 2-norm for vectors and Frobenius norm for matrices,
             reg and reg_b are regularization parameters.
     """
     def __init__(self, lrate=0.01, reg_b=0.01, reg=0.02, activation=Identity(), n_epochs=35, n_factors=9, lrate_decay=0.92, seed=None, verbose=True):
@@ -229,16 +228,17 @@ class MatrixModel(MatrixModelBase):
         rmse = self.rmse(R_val, P, Q, user_bias, item_bias)
         if self.verbose:
             print("Epoch: %3d\trmse: %f" % (0, rmse))
-
+        lrate = self.lrate
         epoch = 1
         while epoch <= self.n_epochs:
+            # Training with stochastic gradient descent (without sampling training examples)
             for (u, i, r) in zip(self.R.row, self.R.col, self.R.data):
                 r_hat = self.predict(u, i, P, Q, user_bias, item_bias)
                 eui = (r - r_hat) * self.g.d(r_hat)  # derivative of activation function
-                P[u, :] += self.lrate * (eui * Q[:, i] - self.reg * P[u, :])
-                Q[:, i] += self.lrate * (eui * P[u, :] - self.reg * Q[:, i])
-                user_bias[u] += self.lrate * (eui - self.reg_b * user_bias[u])
-                item_bias[i] += self.lrate * (eui - self.reg_b * item_bias[i])
+                P[u, :] += lrate * (eui * Q[:, i] - self.reg * P[u, :])
+                Q[:, i] += lrate * (eui * P[u, :] - self.reg * Q[:, i])
+                user_bias[u] += lrate * (eui - self.reg_b * user_bias[u])
+                item_bias[i] += lrate * (eui - self.reg_b * item_bias[i])
             last_rmse = rmse
             rmse = self.rmse(R_val, P, Q, user_bias, item_bias)
             if self.verbose:
@@ -249,7 +249,7 @@ class MatrixModel(MatrixModelBase):
             self.Q = Q
             self.user_bias = user_bias
             self.item_bias = item_bias
-            self.lrate *= self.lrate_decay
+            lrate *= self.lrate_decay
             epoch += 1
         # Set P and Q profiles to zero for unknown users and items
         unknown_users = list(set(self.R_val.row) - set(self.R.row))
@@ -308,10 +308,10 @@ class MatrixModelWeighted(MatrixModelBase):
                 or custom class that implements evaluation, inverse, derivative (input g(x), output g'(x)),
                 all activation functions (including Identity) clip evaluation output to interval [0, 1].
 
-    Parameters are set by optimizing J(P, Q, user_bias, item_bias) with stochastic gradient descent.
-    J = sum((rui - rui_hat)**2) + reg * (F-norm(P) + F-norm(Q) + norm(w)) + reg_b * (norm(user_bias) + norm(item_bias))
+    Parameters are set by optimizing J(P, Q, w, user_bias, item_bias) with stochastic gradient descent.
+    J = sum((rui - rui_hat)**2) + reg * (norm(P) + norm(Q) + norm(w)) + reg_b * (norm(user_bias) + norm(item_bias))
 
-    where   F-norm() is Frobenius norm and norm() is 2-norm,
+    where   norm() is 2-norm for vectors and Frobenius norm for matrices,
             reg and reg_b are regularization parameters.
     """
     def __init__(self, lrate=0.01, reg_b=0.01, reg=0.02, activation=Identity(), n_epochs=35, n_factors=9, lrate_decay=0.92, seed=None, verbose=True):
@@ -351,17 +351,18 @@ class MatrixModelWeighted(MatrixModelBase):
         rmse = self.rmse(R_val, P, Q, w, user_bias, item_bias)
         if self.verbose:
             print("Epoch: %3d\trmse: %f" % (0, rmse))
-
+        lrate = self.lrate
         epoch = 1
         while epoch <= self.n_epochs:
+            # Training with stochastic gradient descent (without sampling training examples)
             for (u, i, r) in zip(self.R.row, self.R.col, self.R.data):
                 r_hat = self.predict(u, i, P, Q, w, user_bias, item_bias)
                 eui = (r - r_hat) * self.g.d(r_hat)  # derivative of activation function
-                P[u, :] += self.lrate * (eui * Q[:, i] - self.reg * P[u, :])
-                Q[:, i] += self.lrate * (eui * P[u, :] - self.reg * Q[:, i])
-                w += self.lrate * (eui * (P[u, :] * Q[:, i]) - self.reg * w)
-                user_bias[u] += self.lrate * (eui - self.reg_b * user_bias[u])
-                item_bias[i] += self.lrate * (eui - self.reg_b * item_bias[i])
+                P[u, :] += lrate * (eui * w * Q[:, i] - self.reg * P[u, :])
+                Q[:, i] += lrate * (eui * w * P[u, :] - self.reg * Q[:, i])
+                w += lrate * (eui * (P[u, :] * Q[:, i]) - self.reg * w)
+                user_bias[u] += lrate * (eui - self.reg_b * user_bias[u])
+                item_bias[i] += lrate * (eui - self.reg_b * item_bias[i])
             last_rmse = rmse
             rmse = self.rmse(R_val, P, Q, w, user_bias, item_bias)
             if self.verbose:
@@ -373,7 +374,7 @@ class MatrixModelWeighted(MatrixModelBase):
             self.w = w
             self.user_bias = user_bias
             self.item_bias = item_bias
-            self.lrate *= self.lrate_decay
+            lrate *= self.lrate_decay
             epoch += 1
         # Set P and Q profiles to zero for unknown users and items
         unknown_users = list(set(self.R_val.row) - set(self.R.row))
@@ -422,12 +423,14 @@ class MatrixModelWeighted(MatrixModelBase):
 
 class MatrixModelFriends(MatrixModelBase):
     """
-    Matrix factorization model that incorporates user's friends network in predictions.
+    Matrix factorization model that uses user's friends network to improve predictions.
+    Also has an option to use weights like in previous model.
 
     Predicts rating rui as
-        rui_hat = g(mean + user_bias[u] + item_bias[i] + (sum(F[j, :])/sqrt(|Fu|) + P[u, :]).dot(Q[:, i]))
+        rui_hat = g(mean + user_bias[u] + item_bias[i] + (sum(F[j, :])/sqrt(|Fu|) + w * P[u, :]).dot(Q[:, i]))
 
     where   P and Q are learned user and item embeddings,
+            w is learned weight vector, * is Hadamard (element-wise) product, used only if use_weights=True,
             F are learned friends embeddings, added to P[u, :] for all friends j of user u,
             |Fu| is number of friends user u has,
             user_bias and item_bias are learned user/item biases,
@@ -436,17 +439,16 @@ class MatrixModelFriends(MatrixModelBase):
                 or custom class that implements evaluation, inverse, derivative (input g(x), output g'(x)),
                 all activation functions (including Identity) clip evaluation output to interval [0, 1].
 
-    Parameters are set by optimizing J(P, Q, user_bias, item_bias) with stochastic gradient descent.
-    J = sum((rui - rui_hat)**2) + reg * (F-norm(P) + F-norm(Q) + F-norm(F)) + reg_b * (norm(user_bias) + norm(item_bias))
+    Parameters are set by optimizing J(P, Q, F, wuser_bias, item_bias) with stochastic gradient descent.
+    J = sum((rui - rui_hat)**2) + reg * (norm(P) + norm(Q) + norm(F) + norm(w)) + reg_b * (norm(user_bias) + norm(item_bias))
 
-    where   F-norm() is Frobenius norm and norm() is 2-norm,
+    where   norm() is 2-norm for vectors and Frobenius norm for matrices,
             reg and reg_b are regularization parameters.
     """
 
-    def __init__(self, lrate=0.01, reg_b=0.01, reg=0.02, activation=Identity(), n_epochs=35, n_factors=9, lrate_decay=0.92, seed=None, verbose=True):
+    def __init__(self, lrate=0.01, reg_b=0.01, reg=0.02, activation=Identity(), n_epochs=35, n_factors=9, lrate_decay=0.92, use_weights=False, seed=None, verbose=True):
         """
         Initializes the model.
-
 
         :param lrate: Learning rate.
         :param reg_b: Regularization parameter for biases.
@@ -455,10 +457,12 @@ class MatrixModelFriends(MatrixModelBase):
         :param n_epochs: Maximum number of epochs (training iterations).
         :param n_factors: Dimensionality of latent embedding space (user P matrix and item Q matrix).
         :param lrate_decay: Exponential learning rate decay.
+        :param use_weights: Whether the algorithm should use weight vector w when predicting ratings
         :param seed: Random state.
         :param verbose: Print information while training.
         """
         super().__init__(lrate, reg_b, reg, activation, n_epochs, n_factors, lrate_decay, seed, verbose)
+        self.use_weights = use_weights
 
     def _init_Fr(self, Fr):
         """
@@ -503,28 +507,35 @@ class MatrixModelFriends(MatrixModelBase):
         F = np.zeros((self.n_users, self.n_factors))
         user_bias = np.zeros(self.n_users)
         item_bias = np.zeros(self.n_items)
+        w = np.ones(self.n_factors)
+        if self.use_weights:
+            # Initialization if used in training
+            w *= 0.01
 
-        rmse = self.rmse(R_val, P, Q, F, user_bias, item_bias)
+        rmse = self.rmse(R_val, P, Q, F, w, user_bias, item_bias)
         if self.verbose:
             print("Epoch: %3d\trmse: %f" % (0, rmse))
-
+        lrate = self.lrate
         epoch = 1
         while epoch <= self.n_epochs:
+            # Training with stochastic gradient descent (without sampling training examples)
             for (u, i, r) in zip(self.R.row, self.R.col, self.R.data):
                 F_sum = np.sum(self.F[self.Fr[u], :], axis=0)
                 F_num = np.sqrt(self.Fr[u].shape[0])  # Try without sqrt
                 if F_num > 0:
                     F_sum /= F_num
-                r_hat = self.predict(u, i, P, Q, F, user_bias, item_bias)
+                r_hat = self.predict(u, i, P, Q, F, w, user_bias, item_bias)
                 eui = (r - r_hat) * self.g.d(r_hat)  # Derivative of activation function
-                P[u, :] += self.lrate * (eui * Q[:, i] - self.reg * P[u, :])
-                Q[:, i] += self.lrate * (eui * (F_sum + P[u, :]) - self.reg * Q[:, i])
+                P[u, :] += lrate * (eui * w * Q[:, i] - self.reg * P[u, :])
+                Q[:, i] += lrate * (eui * (F_sum + w * P[u, :]) - self.reg * Q[:, i])
+                if self.use_weights:
+                    w += lrate * (eui * P[u, :] * Q[:, i] - self.reg * w)
                 if F_num > 0:
-                    F[self.Fr[u], :] += self.lrate * (eui * F_num * Q[:, i] - self.reg * F[self.Fr[u], :])
-                user_bias[u] += self.lrate * (eui - self.reg_b * user_bias[u])
-                item_bias[i] += self.lrate * (eui - self.reg_b * item_bias[i])
+                    F[self.Fr[u], :] += lrate * (eui * Q[:, i] / F_num - self.reg * F[self.Fr[u], :])
+                user_bias[u] += lrate * (eui - self.reg_b * user_bias[u])
+                item_bias[i] += lrate * (eui - self.reg_b * item_bias[i])
             last_rmse = rmse
-            rmse = self.rmse(R_val, P, Q, F, user_bias, item_bias)
+            rmse = self.rmse(R_val, P, Q, F, w, user_bias, item_bias)
             if self.verbose:
                 print("Epoch: %3d\trmse: %f" % (epoch, rmse))
             if last_rmse < rmse:
@@ -532,9 +543,10 @@ class MatrixModelFriends(MatrixModelBase):
             self.P = P
             self.Q = Q
             self.F = F
+            self.w = w
             self.user_bias = user_bias
             self.item_bias = item_bias
-            self.lrate *= self.lrate_decay
+            lrate *= self.lrate_decay
             epoch += 1
         # Set P and Q profiles to zero for unknown users and items
         unknown_users = list(set(self.R_val.row) - set(self.R.row))
@@ -543,7 +555,7 @@ class MatrixModelFriends(MatrixModelBase):
         self.Q[:, unknown_items] = 0.
         return self
 
-    def predict(self, u, i, P=None, Q=None, F=None, user_bias=None, item_bias=None):
+    def predict(self, u, i, P=None, Q=None, F=None, w=None, user_bias=None, item_bias=None):
         """
         Predict the rating user u gives to item i.
 
@@ -579,7 +591,7 @@ class MatrixModelFriends(MatrixModelBase):
             F_num = np.sqrt(self.Fr[u].shape[0])  # Try without sqrt
             if F_num > 0:
                 F_sum /= F_num
-            rui_hat += (F_sum + P[u, :]).dot(Q[:, i])
+            rui_hat += (F_sum + w * P[u, :]).dot(Q[:, i])
         # Apply potential non-linearity (activation) g
         rui_hat = self.g(rui_hat)
         return rui_hat
