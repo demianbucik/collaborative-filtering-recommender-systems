@@ -135,9 +135,9 @@ class AERBMModel:
             W = self.W
         if b_v is None:
             b_v = self.b_v
-        # W.shape = (nitems, F)
-        # h.shape = (nusers, F)
-        # pv.shape = (nusers, nitems)
+        # W.shape = (n_items, n_components)
+        # h.shape = (n_users, n_components)
+        # pv.shape = (n_users, n_items)
         pv = np.einsum("if,uf->ui", W, h)
         pv += b_v
         return self._logistic(pv)
@@ -148,7 +148,7 @@ class AERBMModel:
         :param eps_bound: Bound to avoid division with 0.
         :return: b_v initializatin.
         """
-        # R.shape = [nusers, nitems]
+        # R.shape = [n_users, n_items]
         # p = np.zeros((self.nitems,))
         #p = np.einsum("ui->i", self.R[self.train_ind])
         p = self.R[train_index].sum(axis=0).toarray()
@@ -179,12 +179,6 @@ class AERBMModel:
         :param b_h:  RBM model parameters.
         :return: Predictions r = p(v_all|v)
         """
-        # Predict all ratings r = v_all for user v
-        # Approximate p(v_all|v)
-        # v is a user vector (or matrix of multiple users)
-        # If parameters stay None, we use class parameters (self._)
-        # v.shape = (nusers, nitems, r_dim)
-        # r.shape = (nusers, nitems, )
         v_origshape = v.shape
         if len(v_origshape) == 1:
             v = v.reshape((1, v.shape[0]))
