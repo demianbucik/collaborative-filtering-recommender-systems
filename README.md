@@ -28,6 +28,6 @@ R_hat = rbm.predict(R_new)
 ```
 
 ### Example data
-Number of user play of each artist's song on last.fm The data is clipped if it passes a certan threshold and then rescaled to [0, 1].
+Number of time user plays an artist's song on last.fm The data is clipped if it passes a certan threshold and then rescaled to [0,1].
 Histogram with 20 bins of rescaled data
 <img src="lastfm_ratings_hist.png">
