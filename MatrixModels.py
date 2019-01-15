@@ -108,7 +108,7 @@ class MatrixModelBase:
         self.n_epochs = n_epochs
         self.n_factors = n_factors
         self.lrate_decay = lrate_decay
-        self.rng = np.random.seed(seed)
+        self.rng = np.random.RandomState(seed)
         self.verbose = verbose
 
     def _known(self, what, index):
@@ -127,7 +127,7 @@ class MatrixModelBase:
 
     def rmse(self, R, *args, **kwargs):
         """
-        Calculates root mean squared error for ratings in R
+        Calculates root mean squared error for ratings in R.
         If no additional arguments are passed, predict function will use parameters from self.
 
         :param R: Sparse coo_matrix of ratings used to calculate RMSE.
@@ -188,6 +188,7 @@ class MatrixModel(MatrixModelBase):
 
     Parameters are set by optimizing J(P, Q, user_bias, item_bias) with stochastic gradient descent.
     J = sum((rui - rui_hat)**2) + reg * (norm(P) + norm(Q)) + reg_b * (norm(user_bias) + norm(item_bias))
+    (multiplication with 1/2 is ommited)
 
     where   norm() is 2-norm for vectors and Frobenius norm for matrices,
             reg and reg_b are regularization parameters.
@@ -195,7 +196,6 @@ class MatrixModel(MatrixModelBase):
     def __init__(self, lrate=0.01, reg_b=0.01, reg=0.02, activation=Identity(), n_epochs=35, n_factors=9, lrate_decay=0.92, seed=None, verbose=True):
         """
         Initializes the model.
-
 
         :param lrate: Learning rate.
         :param reg_b: Regularization parameter for biases.
@@ -225,7 +225,7 @@ class MatrixModel(MatrixModelBase):
         user_bias = np.zeros(self.n_users)
         item_bias = np.zeros(self.n_items)
 
-        rmse = self.rmse(R_val, P, Q, user_bias, item_bias)
+        rmse = self.rmse(self.R_val, P, Q, user_bias, item_bias)
         if self.verbose:
             print("Epoch: %3d\trmse: %f" % (0, rmse))
         lrate = self.lrate
@@ -240,7 +240,7 @@ class MatrixModel(MatrixModelBase):
                 user_bias[u] += lrate * (eui - self.reg_b * user_bias[u])
                 item_bias[i] += lrate * (eui - self.reg_b * item_bias[i])
             last_rmse = rmse
-            rmse = self.rmse(R_val, P, Q, user_bias, item_bias)
+            rmse = self.rmse(self.R_val, P, Q, user_bias, item_bias)
             if self.verbose:
                 print("Epoch: %3d\trmse: %f" % (epoch, rmse))
             if last_rmse < rmse:
@@ -318,7 +318,6 @@ class MatrixModelWeighted(MatrixModelBase):
         """
         Initializes the model.
 
-
         :param lrate: Learning rate.
         :param reg_b: Regularization parameter for biases.
         :param reg: Regularization parameter for user, item matrices and w vector.
@@ -348,7 +347,7 @@ class MatrixModelWeighted(MatrixModelBase):
         user_bias = np.zeros(self.n_users)
         item_bias = np.zeros(self.n_items)
 
-        rmse = self.rmse(R_val, P, Q, w, user_bias, item_bias)
+        rmse = self.rmse(self.R_val, P, Q, w, user_bias, item_bias)
         if self.verbose:
             print("Epoch: %3d\trmse: %f" % (0, rmse))
         lrate = self.lrate
@@ -360,11 +359,11 @@ class MatrixModelWeighted(MatrixModelBase):
                 eui = (r - r_hat) * self.g.d(r_hat)  # derivative of activation function
                 P[u, :] += lrate * (eui * w * Q[:, i] - self.reg * P[u, :])
                 Q[:, i] += lrate * (eui * w * P[u, :] - self.reg * Q[:, i])
-                w += lrate * (eui * (P[u, :] * Q[:, i]) - self.reg * w)
+                w += lrate * (eui * (P[u, :] * Q[:, i]) - self.reg/50 * w)
                 user_bias[u] += lrate * (eui - self.reg_b * user_bias[u])
                 item_bias[i] += lrate * (eui - self.reg_b * item_bias[i])
             last_rmse = rmse
-            rmse = self.rmse(R_val, P, Q, w, user_bias, item_bias)
+            rmse = self.rmse(self.R_val, P, Q, w, user_bias, item_bias)
             if self.verbose:
                 print("Epoch: %3d\trmse: %f" % (epoch, rmse))
             if last_rmse < rmse:
@@ -510,9 +509,10 @@ class MatrixModelFriends(MatrixModelBase):
         w = np.ones(self.n_factors)
         if self.use_weights:
             # Initialization if used in training
-            w *= 0.01
+            #w *= 0.01
+            pass
 
-        rmse = self.rmse(R_val, P, Q, F, w, user_bias, item_bias)
+        rmse = self.rmse(self.R_val, P, Q, F, w, user_bias, item_bias)
         if self.verbose:
             print("Epoch: %3d\trmse: %f" % (0, rmse))
         lrate = self.lrate
@@ -520,8 +520,9 @@ class MatrixModelFriends(MatrixModelBase):
         while epoch <= self.n_epochs:
             # Training with stochastic gradient descent (without sampling training examples)
             for (u, i, r) in zip(self.R.row, self.R.col, self.R.data):
-                F_sum = np.sum(self.F[self.Fr[u], :], axis=0)
-                F_num = np.sqrt(self.Fr[u].shape[0])  # Try without sqrt
+                F_sum = np.sum(F[self.Fr[u], :], axis=0)
+                #F_num = np.sqrt(self.Fr[u].shape[0])  # Try without sqrt
+                F_num = self.Fr[u].shape[0]
                 if F_num > 0:
                     F_sum /= F_num
                 r_hat = self.predict(u, i, P, Q, F, w, user_bias, item_bias)
@@ -535,7 +536,7 @@ class MatrixModelFriends(MatrixModelBase):
                 user_bias[u] += lrate * (eui - self.reg_b * user_bias[u])
                 item_bias[i] += lrate * (eui - self.reg_b * item_bias[i])
             last_rmse = rmse
-            rmse = self.rmse(R_val, P, Q, F, w, user_bias, item_bias)
+            rmse = self.rmse(self.R_val, P, Q, F, w, user_bias, item_bias)
             if self.verbose:
                 print("Epoch: %3d\trmse: %f" % (epoch, rmse))
             if last_rmse < rmse:
@@ -574,6 +575,8 @@ class MatrixModelFriends(MatrixModelBase):
             Q = self.Q
         if F is None:
             F = self.F
+        if w is None:
+            w = self.w
         if user_bias is None:
             user_bias = self.user_bias
         if item_bias is None:
@@ -588,7 +591,8 @@ class MatrixModelFriends(MatrixModelBase):
             rui_hat += item_bias[i]
         if known_user and known_item:
             F_sum = np.sum(F[self.Fr[u], :], axis=0)
-            F_num = np.sqrt(self.Fr[u].shape[0])  # Try without sqrt
+            #F_num = np.sqrt(self.Fr[u].shape[0])  # Try without sqrt
+            F_num = self.Fr[u].shape[0]
             if F_num > 0:
                 F_sum /= F_num
             rui_hat += (F_sum + w * P[u, :]).dot(Q[:, i])
