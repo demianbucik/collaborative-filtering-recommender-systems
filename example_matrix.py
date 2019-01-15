@@ -12,10 +12,10 @@ from MatrixModels import MatrixModelWeighted
 from MatrixModels import MatrixModelFriends
 
 # Load preprocessed sparse ratings matrix from lastfm dataset, values in interval [0, 1]
-with open('R_lastfm.pickle', 'rb') as handle:
+with open('data/R_lastfm.pickle', 'rb') as handle:
     R = pickle.load(handle)
 # Load preprocessed sparse friendship matrix, Fr[u, v] = 1 iff u and v are friends
-with open('Fr_lastfm.pickle', 'rb') as handle:
+with open('data/Fr_lastfm.pickle', 'rb') as handle:
     Fr = pickle.load(handle)
 
 
