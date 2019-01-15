@@ -2,7 +2,7 @@
 Implementations of matrix factorization and restricted Boltzmann machine based algorithms for collaborative filtering in Python using Numpy, Scipy.
 
 ### The basics
-Matrix factorization models minimize regularized sum of squared error (equivalent to maximizing log posterior of parameters assuming normal distributions), where rating is predicted as biases plus interaction between user and item. Interaction is modelled as inner product of learned user and item latent feature vectors. 
+Matrix factorization models minimize regularized sum of squared error (equivalent to maximizing log posterior of parameters assuming normal distributions), where rating is predicted as biases plus interaction between user and item passed to an activation function. Interaction is modelled as inner product of learned user and item latent feature vectors. 
 
 Weighted model uses weights on latent factors, model idea is described in https://arxiv.org/pdf/1710.00482.pdf. 
 
