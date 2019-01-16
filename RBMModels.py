@@ -24,7 +24,7 @@ class AERBMModel:
         :param lrate_W: Learning rate for W matrix.
         :param lrate_b_v: Learning rate for b_v visible biases vector.
         :param lrate_b_h: Learning rate for b_h hidden biases vector.
-        :param reg_W:
+        :param reg_W: Regularization parameter for W.
         :param reg_b_v: Regularization parameter for b_v.
         :param reg_b_h: Regularization parameter for b_h.
         :param n_components: Number of hidden units / components.
@@ -54,21 +54,27 @@ class AERBMModel:
         self.rng = np.random.RandomState(seed=seed)
         self.seed = seed
 
-    def rmse(self, index, non_zero=None, W=None, b_v=None, b_h=None):
+    def rmse(self, index, R=None, R_bin=None, non_zero=None, W=None, b_v=None, b_h=None):
         """
         Calculates RMSE with given model parameters for given users
-        :param index: User index to calculate RMSE with.
+        :param index: User index indicates which examples are used to calculate RMSE.
+		:param R: Sparse ratings matrix, if not given, self.R will be used.
+		:param R_bin: Binary sparse matrix indicating present ratings, if not given it will be calculated.
         :param non_zero: Number of non_zero entries in self.R[index], will be calculated if not given.
         :param W: RBM model parameters.
         :param b_v: RBM model parameters.
         :param b_h: RBM model parameters.
         :return: RMSE
         """
+		if R is None:
+			R = self.R
+		if R_bin is None:
+			R_bin = (R > 0).astype(int)
         if non_zero is None:
-            non_zero = self.R_bin[index].getnnz()
-        r_all = self.predict(self.R[index], W=W, b_v=b_v, b_h=b_h)
-        r_all = self.R_bin[index].multiply(r_all)
-        r_diff = self.R[index] - r_all
+            non_zero = R[index].getnnz()
+        r_all = self.predict(R[index], W=W, b_v=b_v, b_h=b_h)
+        r_all = R_bin[index].multiply(r_all)
+        r_diff = R[index] - r_all
         r_diff.data **= 2
         rmse = np.sqrt(r_diff.sum() / non_zero)
         return rmse
@@ -195,9 +201,9 @@ class AERBMModel:
         Fits the RBM parameters to training data in R_train = R[train_index].
         Parameters are estimated by maximizing log posterior probability of parameters given the data.
         W, b_v, b_h = argmax log p(W, b_v, b_h | R_train) = argmax log p(R_train | W, b_v, b_h)
-                                                            + lambda_W/2*norm(W) + lambda_b_v*norm(b_v) + lambda_b_h*norm(b_h)
+                                                            + reg_W*norm(W) + reg_b_v*norm(b_v) + reg_b_h*norm(b_h)
         The likelihood is approximated by contrastive divergence function (G. Hinton) and its gradient is approximated
-        with Gibbs steps (positive and negative phase) and used for learning.
+        with Gibbs steps (positive and negative phase) and used for learning. (In above equation some constants are ommited.)
 
         :param R: Sparse ratings matrix with elements in interval [0, 1]. Ideally in csc_matrix format.
         :param train_index: User index used for training.
@@ -224,7 +230,7 @@ class AERBMModel:
         last_delta_b_v = np.zeros((self.n_items,))
         last_delta_b_h = np.zeros((self.n_components,))
 
-        rmse = self.rmse(val_index, val_non_zero)
+        rmse = self.rmse(val_index, R=self.R, R_bin=self.R_bin, non_zero=val_non_zero)
         if self.verbose:
             print("Epoch: %3d\trmse: %f" % (0, rmse))
         train_len = len(train_index)
@@ -268,11 +274,11 @@ class AERBMModel:
                 last_delta_b_h = delta_b_h
                 last_delta_W = delta_W
                 # Update parameters: mini-batch gradient ascent
-                b_v += (self.lrate_b_v * curr_batch_size / train_len) * delta_b_v
-                b_h += (self.lrate_b_h * curr_batch_size / train_len) * delta_b_h
-                W += (self.lrate_W * curr_batch_size / train_len) * delta_W
+                b_v += (lrate_b_v * curr_batch_size / train_len) * delta_b_v
+                b_h += (lrate_b_h * curr_batch_size / train_len) * delta_b_h
+                W += (lrate_W * curr_batch_size / train_len) * delta_W
             last_rmse = rmse
-            rmse = self.rmse(val_index, val_non_zero)
+            rmse = self.rmse(val_index, R=self.R, R_bin=self.R_bin, non_zero=val_non_zero)
             if self.verbose:
                 print("Epoch: %3d\trmse: %f" % (epoch, rmse))
             if rmse > last_rmse:
@@ -280,9 +286,9 @@ class AERBMModel:
             self.W = W
             self.b_v = b_v
             self.b_h = b_h
-            lrate_W *= self.lrate_decay
-            lrate_b_v *= self.lrate_decay
-            lrate_b_h *= self.lrate_decay
+            lrate_W *= lrate_decay
+            lrate_b_v *= lrate_decay
+            lrate_b_h *= lrate_decay
             epoch += 1
         return self
 
