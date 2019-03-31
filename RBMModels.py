@@ -58,23 +58,32 @@ class AERBMModel:
         """
         Calculates RMSE with given model parameters for given users
         :param index: User index indicates which examples are used to calculate RMSE.
-		:param R: Sparse ratings matrix, if not given, self.R will be used.
-		:param R_bin: Binary sparse matrix indicating present ratings, if not given it will be calculated.
+        :param R: Sparse ratings matrix, if not given, self.R will be used.
+        :param R_bin: Binary sparse matrix indicating present ratings, if not given it will be calculated.
         :param non_zero: Number of non_zero entries in self.R[index], will be calculated if not given.
         :param W: RBM model parameters.
         :param b_v: RBM model parameters.
         :param b_h: RBM model parameters.
         :return: RMSE
         """
-		if R is None:
-			R = self.R
-		if R_bin is None:
-			R_bin = (R > 0).astype(int)
+        if R is None:
+            R = self.R
+        if R_bin is None:
+            R_bin = (R > 0).astype(int)
         if non_zero is None:
             non_zero = R[index].getnnz()
         r_all = self.predict(R[index], W=W, b_v=b_v, b_h=b_h)
         r_all = R_bin[index].multiply(r_all)
         r_diff = R[index] - r_all
+        r_diff.data **= 2
+        rmse = np.sqrt(r_diff.sum() / non_zero)
+        return rmse
+
+    def rmse_elemwise(self, R_train, R_test, R_test_bin, W=None, b_v=None, b_h=None):
+        non_zero = R_test_bin.getnnz()
+        r_all = self.predict(R_train, W=W, b_v=b_v, b_h=b_h)
+        r_all = R_test_bin.multiply(r_all)
+        r_diff = R_test - r_all
         r_diff.data **= 2
         rmse = np.sqrt(r_diff.sum() / non_zero)
         return rmse
@@ -107,7 +116,7 @@ class AERBMModel:
         rand = self.rng.random_sample(size=pv.shape)
         return (rand < pv).astype(int)
 
-    def _prob_hiddens(self, v, W=None, b_h=None):
+    def _prob_hiddens(self, v, W=None, b_h=None, batch_ind=None):
         """
         Calculates probabilities of hiddens given visibles = p(h|v).
         :param v: Values (or probabilities) of hidden units, sparse or numpy array.
@@ -126,6 +135,19 @@ class AERBMModel:
         # ph.shape = (nusers, F)
         #ph = np.einsum("if,ui->uf", W, v)
         ph = v.dot(W)  # Works for sparse and dense v
+        #ph += b_h
+        """
+        if sparse.issparse(v):
+            if batch_ind is None:
+                norm_ratings = 1. / v.getnnz(axis=1)
+            else:
+                norm_ratings = 1. / self.n_ratings[batch_ind]
+            ph = np.einsum("uf,u->uf", ph, norm_ratings)
+        elif type(v) is np.ndarray:
+            ph /= self.n_items
+        else:
+            print("Error. type(v) =", type(v))
+        """
         ph += b_h
         return self._logistic(ph)
 
@@ -157,11 +179,12 @@ class AERBMModel:
         # R.shape = [n_users, n_items]
         # p = np.zeros((self.nitems,))
         #p = np.einsum("ui->i", self.R[self.train_ind])
-        p = self.R[train_index].sum(axis=0).toarray()
+        p = np.squeeze(np.asarray(self.R[train_index].sum(axis=0)))
         p /= p.sum()
         p[p < eps_bound] = eps_bound
         p[p > (1-eps_bound)] = 1 - eps_bound
         b_v = np.log(p / (1-p))
+        #print("bv shape =", b_v[0].shape)
         return b_v
 
     def _check_R(self, R):
@@ -188,15 +211,15 @@ class AERBMModel:
         v_origshape = v.shape
         if len(v_origshape) == 1:
             v = v.reshape((1, v.shape[0]))
+        v_bin = (v > 0).astype(int)
         pv = v
-        for t in range(self.gibbs_steps):
-            ph = self._prob_hiddens(pv, W, b_h)
-            pv = self._prob_visibles(ph, W, b_v)
+        ph = self._prob_hiddens(pv, W, b_h)
+        pv = self._prob_visibles(ph, W, b_v)
         if len(v_origshape) == 1:
             pv = pv[0]
         return pv
 
-    def fit(self, R, train_index, val_index=None):
+    def fit(self, R, train_index, R_val, val_index=None):
         """
         Fits the RBM parameters to training data in R_train = R[train_index].
         Parameters are estimated by maximizing log posterior probability of parameters given the data.
@@ -212,7 +235,13 @@ class AERBMModel:
         """
         self.R = self._check_R(R)
         self.R_bin = (self.R > 0).astype(int)
+        self.R_val = self._check_R(R_val)
+        self.R_val_bin = (self.R_val > 0).astype(int)
+        self.n_ratings = self.R_bin.getnnz(axis=1)
         self.n_users, self.n_items = self.R.shape
+
+        self.rmse_train = list()
+        self.rmse_val = list()
         if val_index is None:
             _, val_index = train_test_split(train_index, test_size=0.25, random_state=self.seed, shuffle=True)
         val_index = val_index
@@ -223,6 +252,7 @@ class AERBMModel:
         # Initialize RBM parameters
         self.W = W = self.rng.normal(loc=0., scale=0.01, size=(self.n_items, self.n_components))
         self.b_v = b_v = self._init_b_v(train_index)
+        #self.b_v = b_v = np.zeros((self.n_items))
         self.b_h = b_h = np.zeros((self.n_components,))
 
         # Parameters for optimization with momentum
@@ -230,7 +260,12 @@ class AERBMModel:
         last_delta_b_v = np.zeros((self.n_items,))
         last_delta_b_h = np.zeros((self.n_components,))
 
-        rmse = self.rmse(val_index, R=self.R, R_bin=self.R_bin, non_zero=val_non_zero)
+        #rmse = self.rmse(val_index, R=self.R, R_bin=self.R_bin, non_zero=val_non_zero)
+        rmse = self.rmse_elemwise(self.R, self.R_val, self.R_val_bin, W, b_v, b_h)
+        #self.rmse_val.append(rmse)
+        #rmse_train = self.rmse_elemwise(self.R, self.R, self.R_bin, W, b_v, b_h)
+        #self.rmse_train.append(rmse_train)
+
         if self.verbose:
             print("Epoch: %3d\trmse: %f" % (0, rmse))
         train_len = len(train_index)
@@ -251,49 +286,53 @@ class AERBMModel:
                 item_frac[item_frac < 0] = 0
 
                 pv = pv0 = self.R[batch_ind]
-                ph = ph0 = self._prob_hiddens(pv0, W, b_h)
+                ph = ph0 = self._prob_hiddens(pv0, W, b_h, batch_ind)
+                #h = self._sample_hiddens(ph)
+                h = ph
                 for t in range(self.gibbs_steps):
                     # Probability of visibles given hiddens
-                    pv = self._prob_visibles(ph, W, b_v)
+                    pv = self._prob_visibles(h, W, b_v)
                     # Only reconstruct over non-missing ratings
-                    pv = batch_bin.multiply(pv).toarray()
+                    pv = batch_bin.multiply(pv)#.toarray()
                     # Probability of hiddens given visibles
-                    ph = self._prob_hiddens(pv, W, b_h)
+                    ph = self._prob_hiddens(pv, W, b_h, batch_ind)
+                    h = ph
                 # Collect estimates of <v>, <h>, <v*h>, average over all users / observed ratings
-                v_pos = np.einsum("ki,ui->i", item_frac, pv0)
-                v_neg = np.einsum("ki,ui->i", item_frac, pv)
+                #v_pos = np.einsum("ki,ui->i", item_frac, pv0)
+                v_pos = np.squeeze(np.asarray(pv0.multiply(item_frac).sum(axis=0)))
+                #v_neg = np.einsum("ki,ui->i", item_frac, pv)
+                v_neg = np.squeeze(np.asarray(pv.multiply(item_frac).sum(axis=0)))
                 h_pos = np.einsum("uf->f", ph0) / curr_batch_size
                 h_neg = np.einsum("uf->f", ph) / curr_batch_size
                 vh_pos = np.einsum("i,f->if", v_pos, h_pos)
                 vh_neg = np.einsum("i,f->if", v_neg, h_neg)
                 # Define parameter updates with momentum and regularization
-                delta_b_v = (1 - self.momentum) * (v_pos - v_neg - self.reg_b_v * b_v) + self.momentum * last_delta_b_v
-                delta_b_h = (1 - self.momentum) * (h_pos - h_neg - self.reg_b_h * b_h) + self.momentum * last_delta_b_h
-                delta_W = (1 - self.momentum) * (vh_pos - vh_neg - self.reg_W * W) + self.momentum * last_delta_W
+                delta_b_v = (1 - self.momentum) * (v_pos - v_neg) + self.momentum * last_delta_b_v
+                delta_b_h = (1 - self.momentum) * (h_pos - h_neg) + self.momentum * last_delta_b_h
+                delta_W = (1 - self.momentum) * (vh_pos - vh_neg) + self.momentum * last_delta_W
                 last_delta_b_v = delta_b_v
                 last_delta_b_h = delta_b_h
                 last_delta_W = delta_W
                 # Update parameters: mini-batch gradient ascent
-                b_v += (lrate_b_v * curr_batch_size / train_len) * delta_b_v
-                b_h += (lrate_b_h * curr_batch_size / train_len) * delta_b_h
-                W += (lrate_W * curr_batch_size / train_len) * delta_W
+                b_v += (lrate_b_v * curr_batch_size / train_len) * (delta_b_v - self.reg_b_v * b_v)
+                b_h += (lrate_b_h * curr_batch_size / train_len) * (delta_b_h - self.reg_b_h * b_h)
+                W += (lrate_W * curr_batch_size / train_len) * (delta_W - self.reg_W * W)
             last_rmse = rmse
-            rmse = self.rmse(val_index, R=self.R, R_bin=self.R_bin, non_zero=val_non_zero)
+            #rmse = self.rmse(val_index, R=self.R, R_bin=self.R_bin, non_zero=val_non_zero)
+            rmse = self.rmse_elemwise(self.R, self.R_val, self.R_val_bin, W, b_v, b_h)
+            #self.rmse_val.append(rmse)
+            #rmse_train = self.rmse_elemwise(self.R, self.R, self.R_bin, W, b_v, b_h)
+            #self.rmse_train.append(rmse_train)
             if self.verbose:
                 print("Epoch: %3d\trmse: %f" % (epoch, rmse))
             if rmse > last_rmse:
-                break
+                #break
+                pass
             self.W = W
             self.b_v = b_v
             self.b_h = b_h
-            lrate_W *= lrate_decay
-            lrate_b_v *= lrate_decay
-            lrate_b_h *= lrate_decay
+            lrate_W *= self.lrate_decay
+            lrate_b_v *= self.lrate_decay
+            lrate_b_h *= self.lrate_decay
             epoch += 1
         return self
-
-class ConditionalRBMModel:
-    # Work in progress.
-    # Calculating probabilities while conditioning on current user's friends.
-    def __init(self):
-        pass
